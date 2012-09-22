@@ -391,6 +391,11 @@ BOOL RKObjectIsValueEqualToValue(id sourceValue, id destinationValue) {
             } else {
                 value = [self.sourceObject valueForKeyPath:attributeMapping.sourceKeyPath];
             }
+            
+            // Ensrure that the value is not empty dictionary
+            if ([value isKindOfClass:[NSDictionary class]] && [(NSDictionary*)value count] == 0) {
+                value = nil;
+            }
         }
         @catch (NSException *exception) {
             if ([[exception name] isEqualToString:NSUndefinedKeyException] && self.objectMapping.ignoreUnknownKeyPaths) {
