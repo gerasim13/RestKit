@@ -286,7 +286,9 @@
 {
     BOOL foundMappable = NO;
     NSMutableDictionary *results = [NSMutableDictionary dictionary];
-    for (NSString *keyPath in mappingsByKeyPath) {
+    for (int i = 0; i < mappingsByKeyPath.allKeys.count; i++) {
+        NSString *keyPath = [mappingsByKeyPath.allKeys objectAtIndex:i];
+        
         id mappingResult = nil;
         id mappableValue = nil;
 
