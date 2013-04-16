@@ -306,10 +306,12 @@
     RKOrderedDictionary *contextValue = [self valueForContext:context];
     NSAssert(contextValue, @"Attempted to retrieve mapping from undefined context: %d", context);
     for (NSString *pattern in contextValue) {
-        RKPathMatcher *pathMatcher = [RKPathMatcher matcherWithPattern:pattern];
-        if ([pathMatcher matchesPath:string tokenizeQueryStrings:NO parsedArguments:nil]) {
-            RKObjectMappingProviderContextEntry *entry = [contextValue objectForKey:pattern];
-            return entry.mapping;
+        @autoreleasepool {
+            RKPathMatcher *pathMatcher = [RKPathMatcher matcherWithPattern:pattern];
+            if ([pathMatcher matchesPath:string tokenizeQueryStrings:NO parsedArguments:nil]) {
+                RKObjectMappingProviderContextEntry *entry = [contextValue objectForKey:pattern];
+                return entry.mapping;
+            }
         }
     }
 
