@@ -1,105 +1,56 @@
 require 'rubygems'
 require 'bundler/setup'
-require 'xcoder'
-require 'restkit/rake'
-require 'ruby-debug'
+require 'rakeup'
+require 'debugger'
 
-RestKit::Rake::ServerTask.new do |t|
+RakeUp::ServerTask.new do |t|
   t.port = 4567
   t.pid_file = 'Tests/Server/server.pid'
   t.rackup_file = 'Tests/Server/server.ru'
-  t.log_file = 'Tests/Server/server.log'
-
-  t.adapter(:thin) do |thin|
-    thin.config_file = 'Tests/Server/thin.yml'
-  end
+  t.server = :thin
 end
 
 namespace :test do
-  task :kill_simulator do
-    system(%q{killall -m -KILL "iPhone Simulator"})
+  task :prepare do    
+    system(%Q{mkdir -p "RestKit.xcworkspace/xcshareddata/xcschemes" && cp Tests/Schemes/*.xcscheme "RestKit.xcworkspace/xcshareddata/xcschemes/"})
   end
   
-  namespace :logic do
-    desc "Run the logic tests for iOS"
-    task :ios => :kill_simulator do
-      config = Xcode.project(:RestKit).target(:RestKitTests).config(:Debug)
-      builder = config.builder
-      build_dir = File.dirname(config.target.project.path) + '/Build'
-      builder.symroot = build_dir + '/Products'
-      builder.objroot = build_dir
-    	builder.test(:sdk => 'iphonesimulator')
-    end
-    
-    desc "Run the logic tests for OS X"
-    task :osx do
-      config = Xcode.project(:RestKit).target(:RestKitFrameworkTests).config(:Debug)
-      builder = config.builder
-      build_dir = File.dirname(config.target.project.path) + '/Build'
-      builder.symroot = build_dir + '/Products'
-      builder.objroot = build_dir
-    	builder.test(:sdk => 'macosx')
-    end
-  end    
-  
-  desc "Run the unit tests for iOS and OS X"
-  task :logic => ['logic:ios', 'logic:osx']
-  
-  namespace :application do
-    desc "Run the application tests for iOS"
-    task :ios => :kill_simulator do
-      config = Xcode.project(:RKApplicationTests).target('Application Tests').config(:Debug)
-      builder = config.builder
-      build_dir = File.dirname(config.target.project.path) + '/Build'
-      builder.symroot = build_dir + '/Products'
-      builder.objroot = build_dir
-    	builder.test(:sdk => 'iphonesimulator')
-    end
+  desc "Run the unit tests for iOS"
+  task :ios => :prepare do
+    $ios_success = system("xctool -workspace RestKit.xcworkspace -scheme RestKitTests -sdk iphonesimulator test -test-sdk iphonesimulator ONLY_ACTIVE_ARCH=NO")
   end
   
-  desc "Run the application tests for iOS"
-  task :application => 'application:ios'
-  
-  desc "Run all tests for iOS and OS X"
-  task :all do
-    Rake.application.invoke_task("test:logic")
-    unit_status = $?.exitstatus
-    Rake.application.invoke_task("test:application")
-    integration_status = $?.exitstatus
-    puts "\033[0;31m!! Unit Tests failed with exit status of #{unit_status}" if unit_status != 0
-    puts "\033[0;31m!! Integration Tests failed with exit status of #{integration_status}" if integration_status != 0
-    puts "\033[0;32m** All Tests executed successfully" if unit_status == 0 && integration_status == 0
+  desc "Run the unit tests for OS X"
+  task :osx => :prepare do
+    $osx_success = system("xctool -workspace RestKit.xcworkspace -scheme RestKitFrameworkTests -sdk macosx test -test-sdk macosx")
   end
   
-  task :check_mongodb do
-    port_check = RestKit::Server::PortCheck.new('127.0.0.1', 27017)
-    port_check.run
-    if port_check.closed?
-      puts "\033[0;33m!! Warning: MongoDB was not found running on port 27017"
-      puts "MongoDB is required for the execution of the OAuth tests. Tests in RKOAuthClientTest will NOT be executed"
-      `which mongo`
-      if $?.exitstatus == 0
-        puts "Execute MongoDB via `mongod run --config /usr/local/etc/mongod.conf`"
-      else
-        puts "Install mongodb with Homebrew via `brew install mongodb`"
-      end
-      puts "\033[0m"
-      sleep(5)
-    end
+  # Provides validation that RestKit continues to build without Core Data. This requires conditional compilation that is error prone
+  task :building_without_core_data do
+    system("cd Examples/RKTwitter && pod install")
+    system("xctool -workspace Examples/RKTwitter/RKTwitter.xcworkspace -scheme RKTwitterCocoaPods -sdk iphonesimulator clean build ONLY_ACTIVE_ARCH=NO")
   end
 end
 
 desc 'Run all the RestKit tests'
-task :test => "test:all"
+task :test => ['test:ios', 'test:osx'] do
+  puts "\033[0;31m!! iOS unit tests failed" unless $ios_success
+  puts "\033[0;31m!! OS X unit tests failed" unless $osx_success
+  if $ios_success && $osx_success
+    puts "\033[0;32m** All tests executed successfully"
+  else
+    exit(-1)
+  end
+end
 
-task :default => ["test:check_mongodb", "server:autostart", "test:all", "server:autostop"]
+task :default => ["server:autostart", :test, "server:autostop"]
 
 def restkit_version
   @restkit_version ||= ENV['VERSION'] || File.read("VERSION").chomp
 end
 
 def apple_doc_command
-  "Vendor/appledoc/appledoc -t Vendor/appledoc/Templates -o Docs/API -p RestKit -v #{restkit_version} -c \"RestKit\" " +
+  "/usr/local/bin/appledoc -o Docs/API -p RestKit -v #{restkit_version} -c \"RestKit\" " +
   "--company-id org.restkit --warn-undocumented-object --warn-undocumented-member  --warn-empty-description  --warn-unknown-directive " +
   "--warn-invalid-crossref --warn-missing-arg --no-repeat-first-par "
 end
@@ -116,25 +67,33 @@ end
 
 desc "Build RestKit for iOS and Mac OS X"
 task :build do
-  run("xcodebuild -workspace RestKit.xcodeproj/project.xcworkspace -scheme RestKit -sdk iphonesimulator5.0 clean build")
-  run("xcodebuild -workspace RestKit.xcodeproj/project.xcworkspace -scheme RestKit -sdk iphoneos clean build")
-  run("xcodebuild -workspace RestKit.xcodeproj/project.xcworkspace -scheme RestKit -sdk macosx10.6 clean build")
-  run("xcodebuild -workspace Examples/RKCatalog/RKCatalog.xcodeproj/project.xcworkspace -scheme RKCatalog -sdk iphoneos clean build")
+  run("xcodebuild -workspace RestKit.xcworkspace -scheme RestKit -sdk iphonesimulator5.0 clean build")
+  run("xcodebuild -workspace RestKit.xcworkspace -scheme RestKit -sdk iphoneos clean build")
+  run("xcodebuild -workspace RestKit.xcworkspace -scheme RestKit -sdk macosx10.6 clean build")
 end
 
 desc "Generate documentation via appledoc"
 task :docs => 'docs:generate'
 
+namespace :appledoc do
+  task :check do
+    unless File.exists?('/usr/local/bin/appledoc')
+      puts "appledoc not found at /usr/local/bin/appledoc: Install via homebrew and try again: `brew install --HEAD appledoc`"
+      exit 1
+    end
+  end
+end
+
 namespace :docs do
-  task :generate do
-    command = apple_doc_command << " --no-create-docset --keep-intermediate-files --create-html Code/"
+  task :generate => 'appledoc:check' do
+    command = apple_doc_command << " --no-create-docset --keep-intermediate-files --create-html `find Code/ -name '*.h'`"
     run(command, 1)
     puts "Generated HTML documentationa at Docs/API/html"
   end
   
   desc "Check that documentation can be built from the source code via appledoc successfully."
-  task :check do
-    command = apple_doc_command << " --no-create-html --verbose 5 Code/"
+  task :check => 'appledoc:check' do
+    command = apple_doc_command << " --no-create-html --verbose 5 `find Code/ -name '*.h'`"
     exitstatus = run(command, 1)
     if exitstatus == 0
       puts "appledoc generation completed successfully!"
@@ -150,14 +109,14 @@ namespace :docs do
   end
   
   desc "Generate & install a docset into Xcode from the current sources"
-  task :install do
-    command = apple_doc_command << " --install-docset Code/"
+  task :install => 'appledoc:check' do
+    command = apple_doc_command << " --install-docset `find Code/ -name '*.h'`"
     run(command, 1)
   end
   
   desc "Build and publish the documentation set to the remote server (using rsync over SSH)"
-  task :publish, :version, :destination do |t, args|
-    args.with_defaults(:version => File.read("VERSION").chomp, :destination => "restkit.org:/var/www/public/restkit.org/public/api/")
+  task :publish, :version, :destination, :publish_feed do |t, args|
+    args.with_defaults(:version => File.read("VERSION").chomp, :destination => "restkit.org:/var/www/public/restkit.org/public/api/", :publish_feed => 'true')
     version = args[:version]
     destination = args[:destination]    
     puts "Generating RestKit docset for version #{version}..."
@@ -165,15 +124,16 @@ namespace :docs do
             " --keep-intermediate-files" <<
             " --docset-feed-name \"RestKit #{version} Documentation\"" <<
             " --docset-feed-url http://restkit.org/api/%DOCSETATOMFILENAME" <<
-            " --docset-package-url http://restkit.org/api/%DOCSETPACKAGEFILENAME --publish-docset --verbose 3 Code/"
+            " --docset-package-url http://restkit.org/api/%DOCSETPACKAGEFILENAME --publish-docset --verbose 3 `find Code/ -name '*.h'`"
     run(command, 1)
     puts "Uploading docset to #{destination}..."
     versioned_destination = File.join(destination, version)
     command = "rsync -rvpPe ssh --delete Docs/API/html/ #{versioned_destination}"
     run(command)
     
-    if $?.exitstatus == 0
-      command = "rsync -rvpPe ssh Docs/API/publish/ #{destination}"
+    should_publish_feed = %{yes true 1}.include?(args[:publish_feed].downcase)
+    if $?.exitstatus == 0 && should_publish_feed
+      command = "rsync -rvpPe ssh Docs/API/publish/* #{destination}"
       run(command)
     end
   end
@@ -182,7 +142,7 @@ end
 namespace :build do
   desc "Build all Example projects to ensure they are building properly"
   task :examples do
-    ios_sdks = %w{iphoneos iphonesimulator5.0}
+    ios_sdks = %w{iphonesimulator5.0 iphonesimulator6.0}
     osx_sdks = %w{macosx}
     osx_projects = %w{RKMacOSX}
     
@@ -195,36 +155,13 @@ namespace :build do
       sdks.each do |sdk|
         puts "Building '#{example_project}' with SDK #{sdk}..."
         scheme = project_name
-        run("xcodebuild -workspace #{example_project}/project.xcworkspace -scheme #{scheme} -sdk #{sdk} clean build")
-        #run("xcodebuild -project #{example_project} -alltargets -sdk #{sdk} clean build")
+        run("xctool -workspace #{example_project}/project.xcworkspace -scheme #{scheme} -sdk #{sdk} clean build")
       end
     end
   end
 end
 
 desc "Validate a branch is ready for merging by checking for common issues"
-task :validate => [:build, 'docs:check', 'uispec:all'] do  
+task :validate => ['build:examples', 'docs:check', :test] do  
   puts "Project state validated successfully. Proceed with merge."
-end
-
-namespace :payload do
-  task :generate do
-    require 'json'
-    require 'faker'
-    
-    ids = (1..25).to_a
-    child_ids = (50..100).to_a
-    child_counts = (10..25).to_a
-    hash = ids.inject({'parents' => []}) do |hash, parent_id|
-      child_count = child_counts.sample
-      children = (0..child_count).collect do
-        {'name' => Faker::Name.name, 'childID' => child_ids.sample}
-      end
-      parent = {'parentID' => parent_id, 'name' => Faker::Name.name, 'children' => children}
-      hash['parents'] << parent
-      hash
-    end
-    File.open('payload.json', 'w+') { |f| f << hash.to_json }
-    puts "Generated payload at: payload.json"
-  end
 end

@@ -18,10 +18,16 @@
 //  limitations under the License.
 //
 
+#ifndef _RESTKIT_
+#define _RESTKIT_
+
+#import "ObjectMapping.h"
 #import "Network.h"
 #import "Support.h"
-#import "ObjectMapping.h"
+
+#ifdef _COREDATADEFINES_H
 #import "CoreData.h"
+#endif
 
 /**
  Set the App logging component. This header
@@ -31,4 +37,6 @@
  to use RKLog() in their own app.
  */
 #undef RKLogComponent
-#define RKLogComponent lcl_cApp
+#define RKLogComponent RKlcl_cApp
+
+#endif /* _RESTKIT_ */
